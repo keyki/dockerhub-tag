@@ -14,6 +14,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docopt/docopt-go"
+	"time"
 )
 
 var Version string = "dev"
@@ -45,20 +46,38 @@ func NewClient(username, password, repository string) *Client {
 		cli:  new(http.Client),
 	}
 
+	for i := 0; i < 10; i++ {
+		if token, err := c.getToken(username, password); err != nil {
+			log.Warnf(err.Error())
+			time.Sleep(1 * time.Second)
+		} else {
+			log.Debug("JWT:", c.token)
+			c.token = token
+			break
+		}
+	}
+	return c
+}
+
+func (c *Client) getToken(username, password string) (string, error) {
 	login := fmt.Sprintf(`{"username": "%s", "password":"%s"}`, username, password)
 	resp, err := c.cli.Post("https://hub.docker.com/v2/users/login",
 		"application/json", strings.NewReader(login))
-	fatal(err)
+	if err != nil {
+		return "", err
+	}
 
 	defer resp.Body.Close()
 	dec := json.NewDecoder(resp.Body)
-	var token map[string]string
-	fatal(dec.Decode(&token))
-
-	c.token = token["token"]
-	log.Debug("JWT:", c.token)
-
-	return c
+	var responseMap map[string]interface{}
+	if err := dec.Decode(&responseMap); err != nil {
+		return "", err
+	}
+	if token, ok := responseMap["token"]; !ok {
+		return "", errors.New("failed to generate login session")
+	} else {
+		return token.(string), nil
+	}
 }
 
 func (c *Client) eachTag(f func(id int, name, sourceType, sourceName, dockerfileLoc string)) {
